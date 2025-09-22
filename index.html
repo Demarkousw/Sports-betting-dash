@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sports Betting Dashboard</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { padding: 1rem; }
+    .bet-card { border: 1px solid #ccc; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+    canvas { background: #fff; padding: 1rem; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <nav class="container-fluid">
+    <ul><li><strong>Sports Betting Dashboard</strong></li></ul>
+    <ul><li><a href="#">Bets</a></li><li><a href="#">Summary</a></li></ul>
+  </nav>
+
+  <main class="container">
+    <!-- Bankroll -->
+    <section>
+      <h3>Starting Bankroll</h3>
+      <form id="bankroll-form" class="grid">
+        <input type="number" id="starting-bankroll" value="50" required />
+        <button type="submit">Update</button>
+      </form>
+    </section>
+
+    <!-- Add Bet -->
+    <section>
+      <h3>Add Bet</h3>
+      <form id="bet-form" class="grid">
+        <select id="team1" required></select>
+        <select id="team2" required></select>
+        <input type="text" id="market" placeholder="Market (ML/Spread/Total)" required />
+        <input type="text" id="line" placeholder="Line (e.g. DAL -2.5)" required />
+        <input type="number" id="odds" placeholder="Odds (-110/+120)" required />
+        <input type="number" step="0.1" id="stake" placeholder="Stake Units" required />
+        <select id="outcome" required>
+          <option value="">Outcome</option>
+          <option value="W">Win</option>
+          <option value="L">Loss</option>
+          <option value="P">Push</option>
+          <option value="pending">Pending</option>
+        </select>
+        <button type="submit">Add Bet</button>
+      </form>
+      <button id="clear-bets">Clear All Bets</button>
+    </section>
+
+    <!-- Bets List -->
+    <section>
+      <h2>Bets List</h2>
+      <div id="bets-container"></div>
+    </section>
+
+    <!-- Summary -->
+    <section>
+      <h2>Summary</h2>
+      <div id="summary"></div>
+      <canvas id="bankrollChart"></canvas>
+    </section>
+  </main>
+
+  <footer class="container">
+    <small><a href="#">Sports Betting Dashboard</a> • Built with Pico.css & Chart.js</small>
+  </footer>
+
+  <script>
+    // --- Teams (trimmed list, can expand as needed) ---
+    const teams = [
+      // NFL
+      {id:"DAL", name:"Dallas Cowboys", sport:"NFL"},
+      {id:"PHI", name:"Philadelphia Eagles", sport:"NFL"},
+      {id:"KC", name:"Kansas City Chiefs", sport:"NFL"},
+      {id:"BUF", name:"Buffalo Bills", sport:"NFL"},
+      {id:"SF", name:"San Francisco 49ers", sport:"NFL"},
+      // MLB
+      {id:"NYY", name:"New York Yankees", sport:"MLB"},
+      {id:"BOS", name:"Boston Red Sox", sport:"MLB"},
+      {id:"LAD", name:"Los Angeles Dodgers", sport:"MLB"},
+      {id:"ATL", name:"Atlanta Braves", sport:"MLB"},
+      {id:"HOU", name:"Houston Astros", sport:"MLB"},
+      // NCAAF
+      {id:"ALA", name:"Alabama Crimson Tide", sport:"NCAAF"},
+      {id:"UGA", name:"Georgia Bulldogs", sport:"NCAAF"},
+      {id:"OSU", name:"Ohio State Buckeyes", sport:"NCAAF"},
+      {id:"MICH", name:"Michigan Wolverines", sport:"NCAAF"},
+      {id:"CLEM", name:"Clemson Tigers", sport:"NCAAF"}
+    ];
+
+    // Load bets + bankroll from localStorage
+    let bets = JSON.parse(localStorage.getItem("bets")) || [];
+    let startingBankroll = parseFloat(localStorage.getItem("bankroll")) || 50;
+    document.getElementById("starting-bankroll").value = startingBankroll;
+
+    let chart;
+
+    // Populate dropdowns
+    function populateDropdowns() {
+      const t1 = document.getElementById("team1");
+      const t2 = document.getElementById("team2");
+      teams.forEach(team => {
+        const opt1 = document.createElement("option");
+        opt1.value = team.id; opt1.textContent = team.name;
+        const opt2 = document.createElement("option");
+        opt2.value = team.id; opt2.textContent = team.name;
+        t1.appendChild(opt1); t2.appendChild(opt2);
+      });
+    }
+
+    function americanToDecimal(odds) {
+      return odds > 0 ? 1 + odds/100 : 1 + 100/Math.abs(odds);
+    }
+
+    function renderBets() {
+      const container = document.getElementById("bets-container");
+      container.innerHTML = "";
+      bets.forEach(bet => {
+        const t1 = teams.find(t => t.id === bet.game[0])?.name || bet.game[0];
+        const t2 = teams.find(t => t.id === bet.game[1])?.name || bet.game[1];
+        const div = document.createElement("div");
+        div.className = "bet-card";
+        div.innerHTML = `
+          <p><strong>Game:</strong> ${t1} vs ${t2} (${bet.sport})</p>
+          <p><strong>Market:</strong> ${bet.market} | Line: ${bet.line}</p>
+          <p><strong>Odds:</strong> ${bet.odds} | Stake: ${bet.stakeUnits}u</p>
+          <p><strong>Outcome:</strong> ${bet.outcome}</p>
+        `;
+        container.appendChild(div);
+      });
+      localStorage.setItem("bets", JSON.stringify(bets));
+      renderSummary();
+    }
+
+    function renderSummary() {
+      let wins=0, losses=0, pushes=0, totalStake=0, netProfit=0;
+      let bankrollCurve=[startingBankroll];
+      let currentBankroll=startingBankroll;
+
+      bets.forEach(bet=>{
+        totalStake += bet.stakeUnits;
+        if(bet.outcome==="W"){
+          const profit = (americanToDecimal(bet.odds)-1)*bet.stakeUnits;
+          netProfit += profit; wins++; currentBankroll += profit;
+        } else if(bet.outcome==="L"){
+          netProfit -= bet.stakeUnits; losses++; currentBankroll -= bet.stakeUnits;
+        } else if(bet.outcome==="P"){
+          pushes++;
+        }
+        bankrollCurve.push(currentBankroll);
+      });
+
+      const roi = totalStake > 0 ? (netProfit/totalStake)*100 : 0;
+      document.getElementById("summary").innerHTML = `
+        <p><strong>Record:</strong> ${wins}-${losses}-${pushes}</p>
+        <p><strong>ROI:</strong> ${roi.toFixed(2)}%</p>
+        <p><strong>Net Units:</strong> ${netProfit.toFixed(2)}u</p>
+        <p><strong>Current Bankroll:</strong> ${currentBankroll.toFixed(2)}u</p>
+      `;
+
+      if(chart) chart.destroy();
+      const ctx = document.getElementById("bankrollChart");
+      chart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: bankrollCurve.map((_, i) => "Bet " + i),
+          datasets: [{ label: "Bankroll (u)", data: bankrollCurve, borderColor: "#4caf50", fill: false }]
+        }
+      });
+    }
+
+    // Events
+    document.getElementById("bankroll-form").addEventListener("submit", e => {
+      e.preventDefault();
+      startingBankroll = parseFloat(document.getElementById("starting-bankroll").value);
+      localStorage.setItem("bankroll", startingBankroll);
+      renderSummary();
+    });
+
+    document.getElementById("bet-form").addEventListener("submit", e => {
+      e.preventDefault();
+      const bet = {
+        game: [document.getElementById("team1").value, document.getElementById("team2").value],
+        sport: teams.find(t => t.id === document.getElementById("team1").value)?.sport || "",
+        market: document.getElementById("market").value,
+        line: document.getElementById("line").value,
+        odds: parseInt(document.getElementById("odds").value),
+        stakeUnits: parseFloat(document.getElementById("stake").value),
+        outcome: document.getElementById("outcome").value
+      };
+      bets.push(bet);
+      renderBets();
+      e.target.reset();
+    });
+
+    document.getElementById("clear-bets").addEventListener("click", () => {
+      bets = [];
+      localStorage.removeItem("bets");
+      renderBets();
+    });
+
+    populateDropdowns();
+    renderBets();
+  </script>
+</body>
+</html>
